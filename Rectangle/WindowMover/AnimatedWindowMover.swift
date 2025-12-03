@@ -10,7 +10,8 @@ import Foundation
 class AnimatedWindowMover: WindowMover {
     
     private static let defaultFrameRate: TimeInterval = 1.0 / 60.0 // 60 FPS
-    private static var currentAnimationId: UUID?
+    private static var animationIds: [ObjectIdentifier: UUID] = [:]
+    private static let animationLock = NSLock()
     
     func moveWindowRect(_ windowRect: CGRect, frameOfScreen: CGRect, visibleFrameOfScreen: CGRect, frontmostWindowElement: AccessibilityElement?, action: WindowAction?) {
         guard let windowElement = frontmostWindowElement,
@@ -27,17 +28,36 @@ class AnimatedWindowMover: WindowMover {
             return
         }
         
-        // Cancel any previous animation by changing the animation ID
+        // Generate unique animation ID for this window
         let animationId = UUID()
-        AnimatedWindowMover.currentAnimationId = animationId
+        let windowKey = ObjectIdentifier(windowElement)
         
-        animate(windowElement: windowElement, from: startRect, to: targetRect, duration: duration, animationId: animationId)
+        AnimatedWindowMover.animationLock.lock()
+        AnimatedWindowMover.animationIds[windowKey] = animationId
+        AnimatedWindowMover.animationLock.unlock()
+        
+        animate(windowElement: windowElement, windowKey: windowKey, from: startRect, to: targetRect, duration: duration, animationId: animationId)
     }
     
-    private func animate(windowElement: AccessibilityElement, from startRect: CGRect, to targetRect: CGRect, duration: TimeInterval, animationId: UUID) {
+    private func isAnimationValid(windowKey: ObjectIdentifier, animationId: UUID) -> Bool {
+        AnimatedWindowMover.animationLock.lock()
+        let isValid = AnimatedWindowMover.animationIds[windowKey] == animationId
+        AnimatedWindowMover.animationLock.unlock()
+        return isValid
+    }
+    
+    private func cleanupAnimation(windowKey: ObjectIdentifier, animationId: UUID) {
+        AnimatedWindowMover.animationLock.lock()
+        if AnimatedWindowMover.animationIds[windowKey] == animationId {
+            AnimatedWindowMover.animationIds.removeValue(forKey: windowKey)
+        }
+        AnimatedWindowMover.animationLock.unlock()
+    }
+    
+    private func animate(windowElement: AccessibilityElement, windowKey: ObjectIdentifier, from startRect: CGRect, to targetRect: CGRect, duration: TimeInterval, animationId: UUID) {
         let frameRate = AnimatedWindowMover.defaultFrameRate
         
-        // Calculate total number of frames (excluding final frame which is added separately)
+        // Calculate total number of frames
         let totalFrames = max(1, Int(duration / frameRate))
         
         for frameIndex in 0..<totalFrames {
@@ -45,7 +65,7 @@ class AnimatedWindowMover: WindowMover {
             
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 // Check if this animation is still valid (hasn't been superseded)
-                guard AnimatedWindowMover.currentAnimationId == animationId else { return }
+                guard self?.isAnimationValid(windowKey: windowKey, animationId: animationId) == true else { return }
                 
                 // Calculate progress based on frame index for consistent timing
                 let progress = Double(frameIndex + 1) / Double(totalFrames)
@@ -61,11 +81,14 @@ class AnimatedWindowMover: WindowMover {
         }
         
         // Schedule final frame to ensure we reach exactly the target position
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
             // Check if this animation is still valid
-            guard AnimatedWindowMover.currentAnimationId == animationId else { return }
+            guard self?.isAnimationValid(windowKey: windowKey, animationId: animationId) == true else { return }
             
             windowElement.setFrame(targetRect, adjustSizeFirst: false)
+            
+            // Cleanup animation tracking
+            self?.cleanupAnimation(windowKey: windowKey, animationId: animationId)
         }
     }
     
