@@ -14,9 +14,12 @@ class AnimatedWindowMover: WindowMover {
     private static let animationLock = NSLock()
     
     func moveWindowRect(_ windowRect: CGRect, frameOfScreen: CGRect, visibleFrameOfScreen: CGRect, frontmostWindowElement: AccessibilityElement?, action: WindowAction?) {
-        guard let windowElement = frontmostWindowElement,
-              let startRect = Optional(windowElement.frame),
-              !startRect.isNull else {
+        guard let windowElement = frontmostWindowElement else {
+            return
+        }
+        
+        let startRect = windowElement.frame
+        if startRect.isNull {
             return
         }
         
@@ -24,7 +27,7 @@ class AnimatedWindowMover: WindowMover {
         let targetRect = windowRect
         
         // If window is already at target, skip animation
-        if startRect.equalTo(targetRect) {
+        if startRect == targetRect {
             return
         }
         
@@ -57,38 +60,34 @@ class AnimatedWindowMover: WindowMover {
     private func animate(windowElement: AccessibilityElement, windowKey: ObjectIdentifier, from startRect: CGRect, to targetRect: CGRect, duration: TimeInterval, animationId: UUID) {
         let frameRate = AnimatedWindowMover.defaultFrameRate
         
-        // Calculate total number of frames
+        // Calculate total number of frames (including final frame)
         let totalFrames = max(1, Int(duration / frameRate))
         
         for frameIndex in 0..<totalFrames {
             let delay = frameRate * Double(frameIndex)
+            let isLastFrame = frameIndex == totalFrames - 1
             
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 // Check if this animation is still valid (hasn't been superseded)
                 guard self?.isAnimationValid(windowKey: windowKey, animationId: animationId) == true else { return }
                 
-                // Calculate progress based on frame index for consistent timing
+                // Calculate progress based on frame index
                 let progress = Double(frameIndex + 1) / Double(totalFrames)
                 
                 // Use ease-out cubic easing for smooth deceleration (similar to macOS animations)
                 let easedProgress = self?.easeOutCubic(progress) ?? progress
                 
-                let currentRect = self?.interpolateRect(from: startRect, to: targetRect, progress: easedProgress) ?? targetRect
+                // On the last frame, ensure we hit the exact target
+                let currentRect = isLastFrame ? targetRect : (self?.interpolateRect(from: startRect, to: targetRect, progress: easedProgress) ?? targetRect)
                 
                 // Only adjust size first on the first frame
                 windowElement.setFrame(currentRect, adjustSizeFirst: frameIndex == 0)
+                
+                // Cleanup animation tracking after last frame
+                if isLastFrame {
+                    self?.cleanupAnimation(windowKey: windowKey, animationId: animationId)
+                }
             }
-        }
-        
-        // Schedule final frame to ensure we reach exactly the target position
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-            // Check if this animation is still valid
-            guard self?.isAnimationValid(windowKey: windowKey, animationId: animationId) == true else { return }
-            
-            windowElement.setFrame(targetRect, adjustSizeFirst: false)
-            
-            // Cleanup animation tracking
-            self?.cleanupAnimation(windowKey: windowKey, animationId: animationId)
         }
     }
     
