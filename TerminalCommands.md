@@ -35,6 +35,7 @@ The preferences window is purposefully slim, but there's a lot that can be modif
 - [Prevent a window that is quickly dragged above the menu bar from going into Mission Control](#prevent-a-window-that-is-quickly-dragged-above-the-menu-bar-from-going-into-mission-control)
 - [Change the behavior of double-click window title bar](#change-the-behavior-of-double-click-window-title-bar)
 - [Change the order of displays to order by x coordinate](#change-the-order-of-displays-to-order-by-x-coordinate-for-next-and-prev-displays-commands)
+- [Enable window animations](#enable-window-animations)
 
 ## Keyboard Shortcuts
 
@@ -513,4 +514,38 @@ By default, display order is left-to-right, line-by-line. You can change this to
 
 ```bash
 defaults write com.knollsoft.Rectangle screensOrderedByX -int 1
+```
+
+## Enable window animations
+
+Enable smooth animations when moving and resizing windows, similar to macOS window management. Windows will animate to their new positions instead of moving instantly.
+
+To enable window animations:
+
+```bash
+defaults write com.knollsoft.Rectangle windowAnimation -int 1
+```
+
+To disable window animations (default):
+
+```bash
+defaults write com.knollsoft.Rectangle windowAnimation -int 2
+```
+
+You can also customize the animation duration. The value is in seconds. Default is 0.2.
+
+```bash
+defaults write com.knollsoft.Rectangle windowAnimationDuration -float 0.2
+```
+
+For a faster animation:
+
+```bash
+defaults write com.knollsoft.Rectangle windowAnimationDuration -float 0.1
+```
+
+For a slower, more noticeable animation:
+
+```bash
+defaults write com.knollsoft.Rectangle windowAnimationDuration -float 0.3
 ```

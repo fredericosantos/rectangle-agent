@@ -12,11 +12,17 @@ class WindowManager {
     
     private let screenDetection = ScreenDetection()
     private let standardWindowMoverChain: [WindowMover]
+    private let animatedWindowMoverChain: [WindowMover]
     private let fixedSizeWindowMoverChain: [WindowMover]
     
     init() {
         standardWindowMoverChain = [
             StandardWindowMover(),
+            BestEffortWindowMover()
+        ]
+        
+        animatedWindowMoverChain = [
+            AnimatedWindowMover(),
             BestEffortWindowMover()
         ]
         
@@ -171,9 +177,14 @@ class WindowManager {
     /// Move/resize a window based on the calculation results.
     /// - Returns: The rect of the window after applying the window action
     func apply(result: ResultParameters) -> CGRect {
-        let windowMoverChain = result.isFixedSize
-        ? fixedSizeWindowMoverChain
-        : standardWindowMoverChain
+        let windowMoverChain: [WindowMover]
+        if result.isFixedSize {
+            windowMoverChain = fixedSizeWindowMoverChain
+        } else if Defaults.windowAnimation.userEnabled {
+            windowMoverChain = animatedWindowMoverChain
+        } else {
+            windowMoverChain = standardWindowMoverChain
+        }
         
         let newRect = result.calcResult.rect.screenFlipped
         
