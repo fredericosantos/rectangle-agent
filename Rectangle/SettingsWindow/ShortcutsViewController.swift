@@ -313,7 +313,7 @@ class ShortcutsViewController: NSViewController {
             ShortcutCategory(actions: [
                 .topLeftSixth, .topCenterSixth, .topRightSixth, .bottomLeftSixth, .bottomCenterSixth, .bottomRightSixth
             ]),
-            ShortcutCategory(actions: [.moveLeft, .moveRight, .moveUp, .moveDown])
+            ShortcutCategory(actions: [.moveLeft, .moveRight, .moveUp, .moveDown, .fillRest])
         ]
         
         let extraCategories: [ShortcutCategory] = [

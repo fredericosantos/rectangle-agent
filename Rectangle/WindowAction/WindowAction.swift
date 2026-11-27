@@ -153,7 +153,8 @@ enum WindowAction: Int, Codable {
          thirdVerticalSixth = 143,
          fourthVerticalSixth = 144,
          fifthVerticalSixth = 145,
-         lastVerticalSixth = 146
+         lastVerticalSixth = 146,
+         fillRest = 147
 
     // Order matters here - it's used in the menu
     static let active = [leftHalf, rightHalf, centerHalf, topHalf, bottomHalf,
@@ -191,7 +192,8 @@ enum WindowAction: Int, Codable {
                          cascadeActiveApp, tileActiveApp,
                          displayOne, displayTwo, displayThree, displayFour, displayFive,
                          displaySix, displaySeven, displayEight, displayNine,
-                         cycleStackedWindows, cycleStackedWindowsBackward
+                         cycleStackedWindows, cycleStackedWindowsBackward,
+                         fillRest
     ]
 
     func post() {
@@ -232,7 +234,7 @@ enum WindowAction: Int, Codable {
              .fifthVerticalEighth, .sixthVerticalEighth, .seventhVerticalEighth, .lastVerticalEighth,
              .firstVerticalSixth, .secondVerticalSixth, .thirdVerticalSixth,
              .fourthVerticalSixth, .fifthVerticalSixth, .lastVerticalSixth,
-             .cycleStackedWindows, .cycleStackedWindowsBackward: return true
+             .cycleStackedWindows, .cycleStackedWindowsBackward, .fillRest: return true
         default: return false
         }
     }
@@ -335,6 +337,7 @@ enum WindowAction: Int, Codable {
         case .rightTodo: return "rightTodo"
         case .cascadeActiveApp: return "cascadeActiveApp"
         case .tileActiveApp: return "tileActiveApp"
+        case .fillRest: return "fillRest"
         case .centerProminently: return "centerProminently"
         case .largerWidth: return "largerWidth"
         case .smallerWidth: return "smallerWidth"
@@ -640,7 +643,7 @@ enum WindowAction: Int, Codable {
              .doubleHeightUp, .doubleHeightDown, .doubleWidthLeft, .doubleWidthRight,
              .halveHeightUp, .halveHeightDown, .halveWidthLeft, .halveWidthRight,
              .specified, .reverseAll, .tileAll, .cascadeAll, .leftTodo, .rightTodo,
-             .cascadeActiveApp, .tileActiveApp,
+             .cascadeActiveApp, .tileActiveApp, .fillRest,
              .centerProminently, .largerHeight, .smallerHeight,
              .displayOne, .displayTwo, .displayThree, .displayFour, .displayFive,
              .displaySix, .displaySeven, .displayEight, .displayNine:
@@ -656,6 +659,8 @@ enum WindowAction: Int, Codable {
             return String(localized: "Twelfths (3x4)")
         case .topLeftSixteenth:
             return String(localized: "Sixteenths (4x4)")
+        case .fillRest:
+            return String(localized: "Fill Rest")
         default: return nil
         }
     }
@@ -685,7 +690,7 @@ enum WindowAction: Int, Codable {
     
     var isDragSnappable: Bool {
         switch self {
-        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .specified, .reverseAll, .tileAll, .tileRows, .tileColumns, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp,
+        case .restore, .previousDisplay, .nextDisplay, .moveUp, .moveDown, .moveLeft, .moveRight, .specified, .reverseAll, .tileAll, .tileRows, .tileColumns, .cascadeAll, .larger, .smaller, .largerWidth, .smallerWidth, .cascadeActiveApp, .tileActiveApp, .fillRest,
             .cycleStackedWindows, .cycleStackedWindowsBackward,
             .firstVerticalEighth, .secondVerticalEighth, .thirdVerticalEighth, .fourthVerticalEighth,
             .fifthVerticalEighth, .sixthVerticalEighth, .seventhVerticalEighth, .lastVerticalEighth,
@@ -851,6 +856,7 @@ enum WindowAction: Int, Codable {
         case .rightTodo: return NSImage()
         case .cascadeActiveApp: return NSImage()
         case .tileActiveApp: return NSImage()
+        case .fillRest: return NSImage()
         case .centerProminently: return NSImage()
         case .largerWidth: return NSImage(imageLiteralResourceName: "largerWidthTemplate")
         case .smallerWidth: return NSImage(imageLiteralResourceName: "smallerWidthTemplate")
@@ -953,7 +959,7 @@ enum WindowAction: Int, Codable {
             return Defaults.applyGapsToMaximize.userDisabled ? .none : .both;
         case .maximizeHeight:
             return Defaults.applyGapsToMaximizeHeight.userDisabled ? .none : .vertical;
-        case .almostMaximize, .previousDisplay, .nextDisplay, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight, .center, .centerProminently, .restore, .specified, .reverseAll, .tileAll, .tileRows, .tileColumns, .cascadeAll, .cascadeActiveApp, .tileActiveApp,
+        case .almostMaximize, .previousDisplay, .nextDisplay, .larger, .smaller, .largerWidth, .smallerWidth, .largerHeight, .smallerHeight, .center, .centerProminently, .restore, .specified, .reverseAll, .tileAll, .tileRows, .tileColumns, .cascadeAll, .cascadeActiveApp, .tileActiveApp, .fillRest,
              .cycleStackedWindows, .cycleStackedWindowsBackward,
              .displayOne, .displayTwo, .displayThree, .displayFour, .displayFive,
              .displaySix, .displaySeven, .displayEight, .displayNine:
