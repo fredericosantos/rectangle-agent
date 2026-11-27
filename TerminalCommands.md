@@ -386,6 +386,28 @@ For example, the command for setting the cascadeActiveApp shortcut to `ctrl shif
 defaults write com.knollsoft.Rectangle cascadeActiveApp -dict-add keyCode -float 2 modifierFlags -float 393475
 ```
 
+## Fill the rest of the screen with the last selected window
+
+Place a window where you want it, then press this shortcut: the focused window stays exactly where
+it is, and the window you were using before it expands to fill the space beside it. A half or a
+third leaves one area, and the fill takes all of it. A corner leaves an L, and the fill takes the
+larger leg — one window cannot be an L shape.
+
+The last selected window means the window immediately behind the focused one.
+
+Nothing is squeezed below the minimum size (see _minimumWindowWidth_ and _minimumWindowHeight_
+above, a quarter of the screen by default). If there is no usable space, or the window will not
+take the size offered, nothing moves and you get a beep. Windows on other Spaces, minimised
+windows, and windows shelved in the Stage Manager strip are never used.
+
+To undo it, focus the filled window and press your restore shortcut.
+
+_Fill Rest_ is listed under Move in the Shortcuts settings. To set it from the CLI instead:
+
+```bash
+defaults write com.knollsoft.Rectangle fillRest -dict-add keyCode -float 31 modifierFlags -float 786432
+```
+
 ## Modify the "footprint" displayed for drag to snap area
 
 Adjust the alpha (transparency). Default is 0.3, or 0 for the blurred preview, where it controls tint opacity.

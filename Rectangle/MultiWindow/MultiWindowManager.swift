@@ -42,6 +42,9 @@ class MultiWindowManager {
         case .tileActiveApp:
             tileActiveAppWindowsOnScreen(windowElement: parameters.windowElement)
             return true
+        case .fillRest:
+            fillRestWithLastSelectedWindow(windowElement: parameters.windowElement)
+            return true
         case .cycleStackedWindows:
             StackCycleManager.cycle(forward: true, windowElement: parameters.windowElement, windowIsFocused: !parameters.preservesFocus)
             return true
@@ -448,5 +451,250 @@ class MultiWindowManager {
         let filtered = windows.filter { $0.pid == frontWindowElement.pid }
 
         tileAllWindowsOnScreen(windows: filtered, screen: screens.currentScreen)
+    }
+
+    // MARK: - Organize the rest of the windows around the focused one
+
+    /// Owners whose "windows" nobody wants arranged. The level check below catches most of them;
+    /// this catches the rest, and matches the predicate `getWindowElementUnderCursor` already uses.
+    private static let fillRestExcludedProcessNames: Set<String> = ["Dock", "WindowManager", "Notification Center"]
+
+    /// A window that survived filtering, with its id and frame already in hand.
+    ///
+    /// The id is resolved during planning and never again. `getWindowId()` falls back to matching
+    /// pid and frame against a list cached for 100 ms, so once frames are being written that
+    /// fallback can answer with a *different* window's id — which would then be recorded as the
+    /// restore rect for a window that was never touched.
+    private struct FillCandidate {
+        let element: AccessibilityElement
+        let id: CGWindowID
+        let frame: CGRect
+    }
+
+    /// The smallest a window may be made, as the rest of the app defines it: a fraction of the
+    /// visible frame, a quarter by default, ignoring out-of-range values. Same convention as
+    /// `ChangeWindowDimensionCalculation`, which owns it for single-window resizes.
+    static func minimumWindowSize(in visibleFrame: CGRect) -> CGSize {
+        func fraction(_ value: Double) -> CGFloat {
+            (value <= 0 || value > 1) ? 0.25 : CGFloat(value)
+        }
+        return CGSize(width: floor(visibleFrame.width * fraction(Defaults.minimumWindowWidth.value)),
+                      height: floor(visibleFrame.height * fraction(Defaults.minimumWindowHeight.value)))
+    }
+
+    /// The exact complement of `anchor` inside `visibleFrame`, as disjoint rectangles.
+    ///
+    /// At most four: the full-height bands left and right of the anchor, and the strips above and
+    /// below it within the anchor's own column. One band for a half or a third, two for a corner,
+    /// four for a window floating clear of every edge. Because their union is exactly the free
+    /// space, nothing downstream has to reason about L shapes — each band is filled as its own
+    /// grid, and a band too small to hold a window at the minimum size is simply dropped.
+    private static func freeBands(around anchor: CGRect, in visibleFrame: CGRect) -> [CGRect] {
+        let clipped = anchor.intersection(visibleFrame)
+        guard !clipped.isNull, clipped.width >= 1, clipped.height >= 1 else { return [visibleFrame] }
+
+        return [
+            CGRect(x: visibleFrame.minX, y: visibleFrame.minY,
+                   width: clipped.minX - visibleFrame.minX, height: visibleFrame.height),
+            CGRect(x: clipped.maxX, y: visibleFrame.minY,
+                   width: visibleFrame.maxX - clipped.maxX, height: visibleFrame.height),
+            CGRect(x: clipped.minX, y: visibleFrame.minY,
+                   width: clipped.width, height: clipped.minY - visibleFrame.minY),
+            CGRect(x: clipped.minX, y: clipped.maxY,
+                   width: clipped.width, height: visibleFrame.maxY - clipped.maxY)
+        ].filter { $0.width >= 1 && $0.height >= 1 }
+    }
+
+    /// Which of a cell's edges do not lie on the visible frame's boundary, and therefore abut
+    /// something else — another cell, or the anchor. `GapCalculation` gives those half a gap, so
+    /// two abutting cells contribute a full one between them while a screen edge keeps the whole.
+    private static func sharedEdges(of rect: CGRect, in visibleFrame: CGRect) -> Edge {
+        var edges: Edge = .none
+        if rect.minX > visibleFrame.minX + 1 { edges.insert(.left) }
+        if rect.maxX < visibleFrame.maxX - 1 { edges.insert(.right) }
+        if rect.minY > visibleFrame.minY + 1 { edges.insert(.bottom) }
+        if rect.maxY < visibleFrame.maxY - 1 { edges.insert(.top) }
+        return edges
+    }
+
+    /// The rect a single window should take to fill what `anchor` leaves free: the largest of the
+    /// disjoint bands around it, with gaps applied. Pure, and the only place the layout is decided.
+    ///
+    /// The largest band rather than the exact complement, because one window cannot be an L. For a
+    /// half, a third or any full-width or full-height band they are the same thing; for a corner
+    /// anchor the opposite quarter is left empty, which is the honest outcome for one window.
+    ///
+    /// Returns nil when nothing is left that clears `minSize`, and the caller then moves nothing.
+    ///
+    /// Coordinates are whatever space the caller is in, since every operation here is symmetric in
+    /// y; `.bottom` and `.top` mean the low-y and high-y edges. The callers work in accessibility
+    /// coordinates, as the other multi-window actions do.
+    static func fillRect(anchor: CGRect,
+                         visibleFrame: CGRect,
+                         gapSize: CGFloat,
+                         minSize: CGSize) -> CGRect? {
+        guard let band = freeBands(around: anchor, in: visibleFrame)
+            .filter({ $0.width >= minSize.width && $0.height >= minSize.height })
+            .max(by: { $0.width * $0.height < $1.width * $1.height })
+        else { return nil }
+
+        return GapCalculation.applyGaps(band, sharedEdges: sharedEdges(of: band, in: visibleFrame),
+                                        gapSize: Float(gapSize))
+    }
+
+    /// Windows the user can actually see on `screen`, cheapest checks first.
+    ///
+    /// The CoreGraphics list does the expensive filtering for free. `.optionOnScreenOnly` is the
+    /// current-Space membership test, so it excludes other Spaces and minimised windows in one
+    /// predicate — which matters more than it sounds: `getAllWindowElements` asks each app for
+    /// *all* its windows, so without this the multi-window actions move windows on Spaces the user
+    /// is not looking at, and the damage is invisible until they switch. The list also carries the
+    /// level, owner name and frame needed to drop the Dock, desktop widgets and Notification
+    /// Center, and to pick the screen, without a single accessibility round trip. Only survivors
+    /// cost AX reads, and those are one window-list enumeration per app rather than per window.
+    private static func fillRestCandidates(on screen: NSScreen, screensOrdered: [NSScreen]) -> [FillCandidate] {
+        let screenDetection = ScreenDetection()
+        let infos = WindowUtil.getWindowList().filter { info in
+            info.level == 0
+                && !fillRestExcludedProcessNames.contains(info.processName ?? "")
+                && info.frame.width >= 1 && info.frame.height >= 1
+                && screenDetection.screenContaining(info.frame, screens: screensOrdered) == screen
+        }
+
+        /// Walked in the order the list arrives in, which is front to back, because that order is
+        /// the whole basis of "the last selected window". Each application is still asked for its
+        /// window list only once.
+        var elementsByPid = [pid_t: [CGWindowID: AccessibilityElement]]()
+        var candidates = [FillCandidate]()
+        for info in infos {
+            if elementsByPid[info.pid] == nil {
+                var byId = [CGWindowID: AccessibilityElement]()
+                for element in AccessibilityElement(info.pid).windowElements ?? [] {
+                    if let id = element.windowId { byId[id] = element }
+                }
+                elementsByPid[info.pid] = byId
+            }
+            guard let element = elementsByPid[info.pid]?[info.id] else { continue }
+            candidates.append(FillCandidate(element: element, id: info.id, frame: info.frame))
+        }
+        return candidates
+    }
+
+    private static func refuseFill(_ reason: String) {
+        NSSound.beep()
+        Logger.log("fill: \(reason)")
+    }
+
+    /// Keeps the focused window exactly where it is and expands the window you were using before
+    /// it to fill the space it leaves.
+    ///
+    /// "The last selected window" is the second window in the CoreGraphics on-screen list, which
+    /// arrives front to back. That is free, needs no focus tracking of its own, and matches what
+    /// the user can see: the window behind the one they are in.
+    ///
+    /// Not animated, for the reasons on `execute` — the multi-window actions all move several
+    /// windows at once, and one of them animating while the rest snap would read as a glitch.
+    ///
+    /// Undo is the existing `restore` action. The restore rect is recorded before the move, so
+    /// focusing the filled window and pressing restore puts it back — the same granularity as
+    /// every other undo in the app.
+    static func fillRestWithLastSelectedWindow(windowElement: AccessibilityElement? = nil) {
+        let start = CACurrentMediaTime()
+
+        guard let anchor = windowElement ?? AccessibilityElement.getFrontWindowElement() else {
+            refuseFill("no focused window to fill around")
+            return
+        }
+        guard anchor.isSheet != true, anchor.isSystemDialog != true else {
+            refuseFill("the focused window is a sheet or a system dialog")
+            return
+        }
+        guard let anchorId = anchor.getWindowId() else {
+            refuseFill("cannot resolve the focused window's id")
+            return
+        }
+        guard let screens = ScreenDetection().detectScreens(using: anchor) else {
+            refuseFill("cannot detect the screen of the focused window")
+            return
+        }
+
+        /// Where the anchor is *going* if its own move is still animating, so a shortcut pressed
+        /// mid-animation does not measure a halfway frame. And where Rectangle last put it, if it
+        /// is still sitting there: a half placed by an action then leaves an exactly complementary
+        /// band rather than one a point off from the app's own rounding.
+        var anchorFrame = anchor.logicalFrame
+        if let recorded = AppDelegate.windowHistory.lastRectangleActions[anchorId]?.rect,
+           approximatelyEqual(recorded, anchorFrame) {
+            anchorFrame = recorded
+        }
+        guard !anchorFrame.isNull else {
+            refuseFill("cannot read the focused window's frame")
+            return
+        }
+
+        let visibleFrame = screens.currentScreen.adjustedVisibleFrame().screenFlipped
+        let minSize = minimumWindowSize(in: visibleFrame)
+
+        guard let target = fillRestCandidates(on: screens.currentScreen, screensOrdered: screens.screensOrdered)
+            .first(where: { candidate in
+                guard candidate.id != anchorId,
+                      candidate.element.isWindow == true,
+                      candidate.element.isSheet != true,
+                      candidate.element.isStandardWindow == true,
+                      candidate.element.isResizable() else { return false }
+                /// A window shelved in the Stage Manager strip is shelved deliberately, and
+                /// `SnappingManager.canSnap` already refuses to move one for the same reason.
+                guard StageUtil.stageCapable, StageUtil.stageEnabled else { return true }
+                return StageUtil.getStageStripWindowGroup(candidate.id, screens.currentScreen) == nil
+            })
+        else {
+            refuseFill("no other window on this screen to fill with")
+            return
+        }
+
+        guard let rect = fillRect(anchor: anchorFrame, visibleFrame: visibleFrame,
+                                  gapSize: CGFloat(Defaults.gapSize.value), minSize: minSize) else {
+            refuseFill("the focused window leaves nothing bigger than \(Int(minSize.width))x\(Int(minSize.height))")
+            return
+        }
+
+        /// Ask the WindowServer whether the window would actually take the rect before writing it.
+        /// The animation settlement corrects a refused size after the fact with a second pass;
+        /// predicting it costs one query and never shows the correction. An unknown answer counts
+        /// as a refusal: a freshly opened window reports nothing for the first seconds of its
+        /// life, and filling the screen with a window that then clamps is worse than not filling
+        /// it.
+        guard let achievable = target.element.achievableSize(for: rect.size),
+              abs(achievable.width - rect.width) <= 1, abs(achievable.height - rect.height) <= 1 else {
+            refuseFill("the last selected window will not take \(Int(rect.width))x\(Int(rect.height))")
+            return
+        }
+
+        guard !approximatelyEqual(target.frame, rect) else {
+            Logger.log("fill: the last selected window already fills the space")
+            return
+        }
+
+        /// Same rule `WindowManager` uses: only claim the restore rect if the window has not
+        /// already got one from a position the user chose, so a repeat press does not overwrite the
+        /// original with an already-filled frame.
+        let history = AppDelegate.windowHistory
+        if history.restoreRects[target.id] == nil
+            || history.lastRectangleActions[target.id]?.rect != target.frame {
+            history.restoreRects[target.id] = target.frame
+        }
+
+        WindowAnimator.shared.cancel(for: target.element)
+        target.element.setFrame(rect)
+
+        history.recordAction(windowId: target.id, resultingRect: rect, action: .fillRest, subAction: nil)
+
+        Logger.log(String(format: "fill: last selected window filled %.0fx%.0f in %.0f ms",
+                          rect.width, rect.height, (CACurrentMediaTime() - start) * 1000))
+    }
+
+    private static func approximatelyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) <= 1 && abs(a.minY - b.minY) <= 1
+            && abs(a.width - b.width) <= 1 && abs(a.height - b.height) <= 1
     }
 }
